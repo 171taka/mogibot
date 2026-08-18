@@ -5,7 +5,7 @@ from discord.ext import commands
 # CONFIGURATION
 # ============================================================
 
-TOKEN = "MET_TON_TOKEN_ICI"
+TOKEN = os.environ.get("DISCORD_TOKEN")
 
 # ID des rôles autorisés à lancer/fermer une SQ.
 # Laisse [] si tu veux utiliser uniquement la permission Administrator.

@@ -448,3 +448,5 @@ async def on_command_error(ctx, error):
 
 if TOKEN == "MET_TON_TOKEN_ICI":
     print("⚠️ N'oublie pas de mettre le token de ton bot dans TOKEN.")
+
+bot.run(TOKEN)

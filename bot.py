@@ -31,7 +31,7 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 #             "name": "RR",
 #             "size": 3,
 #             "teams": [set({user_id, ...})],
-#             "pending": { target_id: {"proposer_id": proposer_id, "team": team_or_none} }
+#             "pending": { target_id: proposer_id }
 #         }
 #     }
 # }
@@ -168,53 +168,50 @@ async def sq(ctx, format_: str = None, *, name: str = None):
 async def handle_accept(ctx, queue):
     size = queue["size"]
     author_id = ctx.author.id
-    pending_data = queue["pending"].get(author_id)
+    proposer_id = queue["pending"].get(author_id)
 
-    if not pending_data:
+    if not proposer_id:
         return
 
-    proposer_id = pending_data["proposer_id"]
-    target_team = pending_data["team"]
     proposer = ctx.guild.get_member(proposer_id)
 
+    # Check if accepting user is already in a team
     if find_team_in_queue(queue, author_id):
         queue["pending"].pop(author_id, None)
         await ctx.send("❌ You are already in a team in this SQ.")
         return
 
-    if target_team is not None:
-        if target_team not in queue["teams"]:
-            queue["pending"].pop(author_id, None)
-            await ctx.send("❌ The team you were invited to no longer exists.")
-            return
+    # Check if the proposer is currently in an existing team
+    proposer_team = find_team_in_queue(queue, proposer_id)
 
-        if len(target_team) >= size:
+    if proposer_team is not None:
+        # Join the proposer's existing team
+        if len(proposer_team) >= size:
             queue["pending"].pop(author_id, None)
             await ctx.send(f"❌ The team is already full ({size}/{size}).")
             return
 
-        target_team.add(author_id)
+        proposer_team.add(author_id)
         queue["pending"].pop(author_id, None)
 
         await ctx.send(
-            f"✅ {ctx.author.mention} accepted invite from {proposer.mention if proposer else f'<@{proposer_id}>'} in **{queue['name']}**.\n"
-            f"👥 Team updated : {team_label(target_team, ctx.guild)} (**{len(target_team)}/{size}**)."
+            f"✅ {ctx.author.mention} accepted the invite from "
+            f"{proposer.mention if proposer else f'<@{proposer_id}>'} in **{queue['name']}**.\n"
+            f"👥 Team updated : {team_label(proposer_team, ctx.guild)} (**{len(proposer_team)}/{size}**)."
         )
 
-        if len(target_team) == size:
-            await ctx.send(f"🔥 **Team full in {queue['name']}!**\n{team_label(target_team, ctx.guild)}")
-    else:
-        if find_team_in_queue(queue, proposer_id):
-            queue["pending"].pop(author_id, None)
-            await ctx.send("❌ The player who invited you is already in a team.")
-            return
+        if len(proposer_team) == size:
+            await ctx.send(f"🔥 **Team full in {queue['name']}!**\n{team_label(proposer_team, ctx.guild)}")
 
+    else:
+        # Proposer is not in a team yet -> Create a new team with Proposer + Author
         team = {proposer_id, author_id}
         queue["teams"].append(team)
         queue["pending"].pop(author_id, None)
 
         await ctx.send(
-            f"✅ {ctx.author.mention} accepted invite of {proposer.mention if proposer else f'<@{proposer_id}>'} in **{queue['name']}**.\n"
+            f"✅ {ctx.author.mention} accepted the invite from "
+            f"{proposer.mention if proposer else f'<@{proposer_id}>'} in **{queue['name']}**.\n"
             f"👥 Team created : {team_label(team, ctx.guild)} (**{len(team)}/{size}**)."
         )
 
@@ -263,10 +260,8 @@ async def handle_invites(ctx, queue, members: list[discord.Member]):
             await ctx.send(f"❌ {member.mention} already has a pending invite in this SQ.")
             continue
 
-        queue["pending"][member.id] = {
-            "proposer_id": author_id,
-            "team": author_team
-        }
+        # Save the proposer ID for the pending invite
+        queue["pending"][member.id] = author_id
         invited_mentions.append(member.mention)
 
     if invited_mentions:
@@ -455,8 +450,7 @@ async def sqlist(ctx, name: str = None):
         pending = queue["pending"]
         if pending:
             mentions = []
-            for target_id, data in pending.items():
-                proposer_id = data["proposer_id"]
+            for target_id, proposer_id in pending.items():
                 mentions.append(f"<@{target_id}> ← <@{proposer_id}>")
             embed.add_field(
                 name="📨 Pending invitations",

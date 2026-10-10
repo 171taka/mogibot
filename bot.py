@@ -171,7 +171,7 @@ async def sq(ctx, format_: str = None):
 
 @bot.command()
 @commands.guild_only()
-async def c(ctx, member: discord.Member = None):
+async def c(ctx, members: commands.Greedy[discord.Member]):
     """
     Deux usages :
     !c @joueur -> proposer ce joueur comme mate

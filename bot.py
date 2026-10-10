@@ -450,4 +450,3 @@ if TOKEN == "MET_TON_TOKEN_ICI":
     print("⚠️ Do not forget to input your token.")
 
 bot.run(TOKEN)
-

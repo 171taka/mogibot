@@ -249,4 +249,309 @@ async def handle_invites(ctx, queue, members: list[discord.Member]):
             await ctx.send("❌ You cannot invite yourself.")
             continue
 
-        target_team = find_team
+        target_team = find_team_in_queue(queue, member.id)
+
+        if author_team and member.id in author_team:
+            await ctx.send(f"❌ {member.mention} is already in your team.")
+            continue
+
+        if target_team:
+            await ctx.send(f"❌ {member.mention} is already in another team in this SQ.")
+            continue
+
+        if member.id in queue["pending"]:
+            await ctx.send(f"❌ {member.mention} already has a pending invite in this SQ.")
+            continue
+
+        queue["pending"][member.id] = {
+            "proposer_id": author_id,
+            "team": author_team
+        }
+        invited_mentions.append(member.mention)
+
+    if invited_mentions:
+        plist = ", ".join(invited_mentions)
+        await ctx.send(
+            f"📨 {plist}, {ctx.author.mention} invited you to join their team in **{queue['name']}**.\n"
+            f"👉 Use `!c` to **accept**."
+        )
+
+
+@bot.command()
+@commands.guild_only()
+async def c(ctx, *args):
+    """
+    Usages:
+    !c -> Accept a pending invite
+    !c @player1 @player2... -> Invite player(s) (if 1 active SQ)
+    !c <sq_name> @player1 @player2... -> Invite player(s) to a specific SQ
+    """
+    guild_id = ctx.guild.id
+    server_queues = get_server_queues(guild_id)
+
+    if not server_queues:
+        await ctx.send("❌ No SQs are open/available.")
+        return
+
+    # Case 1: !c (Accept pending invite)
+    if not args:
+        user_pendings = []
+        for sq_key, queue in server_queues.items():
+            if ctx.author.id in queue["pending"]:
+                user_pendings.append((sq_key, queue))
+
+        if not user_pendings:
+            await ctx.send("❌ You don't have any pending team requests.")
+            return
+
+        if len(user_pendings) > 1:
+            names = ", ".join([q["name"] for _, q in user_pendings])
+            await ctx.send(f"❌ Pending invites in multiple SQs ({names}). Please specify name: `!c <sq_name>`.")
+            return
+
+        await handle_accept(ctx, user_pendings[0][1])
+        return
+
+    # Case 2: Parse args to separate SQ identifier and target member pings
+    members = []
+    sq_key = None
+    converter = commands.MemberConverter()
+
+    for arg in args:
+        try:
+            m = await converter.convert(ctx, arg)
+            if m:
+                members.append(m)
+                continue
+        except Exception:
+            pass
+
+        # If it's not a valid member mention/ID, assume it's the SQ name
+        if sq_key is None and not members:
+            sq_key = arg.lower()
+
+    if not members:
+        await ctx.send("❌ Player not found. Usage: `!c @player1 @player2` or `!c <sq_name> @player1 @player2`.")
+        return
+
+    target_queue = None
+    if sq_key:
+        if sq_key in server_queues:
+            target_queue = server_queues[sq_key]
+        else:
+            await ctx.send(f"❌ No SQ named `{sq_key}` found.")
+            return
+    else:
+        # Detect active SQ for author or default to single open SQ
+        author_sqs = []
+        for s_key, queue in server_queues.items():
+            if find_team_in_queue(queue, ctx.author.id):
+                author_sqs.append((s_key, queue))
+
+        if len(author_sqs) == 1:
+            target_queue = author_sqs[0][1]
+        elif len(author_sqs) > 1:
+            names = ", ".join([q["name"] for _, q in author_sqs])
+            await ctx.send(f"❌ You are in multiple SQs ({names}). Specify name: `!c <sq_name> @player1 @player2`.")
+            return
+        else:
+            if len(server_queues) == 1:
+                target_queue = list(server_queues.values())[0]
+            else:
+                names = ", ".join([q["name"] for q in server_queues.values()])
+                await ctx.send(f"❌ Multiple SQs open ({names}). Specify name: `!c <sq_name> @player1 @player2`.")
+                return
+
+    await handle_invites(ctx, target_queue, members)
+
+
+# ============================================================
+# !d = quitter son équipe
+# ============================================================
+
+@bot.command()
+@commands.guild_only()
+async def d(ctx, name: str = None):
+    guild_id = ctx.guild.id
+    server_queues = get_server_queues(guild_id)
+
+    if not server_queues:
+        await ctx.send("❌ No SQs are open/available.")
+        return
+
+    target_queue = None
+    user_id = ctx.author.id
+
+    if name:
+        sq_key = name.lower()
+        if sq_key in server_queues:
+            target_queue = server_queues[sq_key]
+        else:
+            await ctx.send(f"❌ No SQ named `{name}` found.")
+            return
+    else:
+        matches = []
+        for q_key, queue in server_queues.items():
+            if user_id in queue["pending"] or find_team_in_queue(queue, user_id):
+                matches.append(queue)
+
+        if len(matches) == 1:
+            target_queue = matches[0]
+        elif len(matches) > 1:
+            names = ", ".join([q["name"] for q in matches])
+            await ctx.send(f"❌ Active in multiple SQs ({names}). Specify name: `!d <sq_name>`.")
+            return
+        else:
+            await ctx.send("❌ You are not in any team or pending invite.")
+            return
+
+    if user_id in target_queue["pending"]:
+        target_queue["pending"].pop(user_id, None)
+        await ctx.send(f"✅ The invite in **{target_queue['name']}** has been declined.")
+        return
+
+    team = find_team_in_queue(target_queue, user_id)
+    if not team:
+        await ctx.send("❌ You are not in a team.")
+        return
+
+    team.remove(user_id)
+    if len(team) == 0:
+        target_queue["teams"].remove(team)
+
+    await ctx.send(f"🚪 {ctx.author.mention} has left their team in **{target_queue['name']}**.")
+
+
+# ============================================================
+# !sqlist = voir les équipes
+# ============================================================
+
+@bot.command()
+@commands.guild_only()
+async def sqlist(ctx, name: str = None):
+    guild_id = ctx.guild.id
+    server_queues = get_server_queues(guild_id)
+
+    if not server_queues:
+        await ctx.send("❌ No SQs are open/available.")
+        return
+
+    if name:
+        sq_key = name.lower()
+        if sq_key not in server_queues:
+            await ctx.send(f"❌ No SQ named `{name}` found.")
+            return
+        queues_to_show = [server_queues[sq_key]]
+    else:
+        queues_to_show = list(server_queues.values())
+
+    for queue in queues_to_show:
+        size = queue["size"]
+        embed = discord.Embed(
+            title=f"📋 SQ '{queue['name']}' ({format_name(size)})",
+            description=build_status(ctx.guild, queue)
+        )
+
+        pending = queue["pending"]
+        if pending:
+            mentions = []
+            for target_id, data in pending.items():
+                proposer_id = data["proposer_id"]
+                mentions.append(f"<@{target_id}> ← <@{proposer_id}>")
+            embed.add_field(
+                name="📨 Pending invitations",
+                value="\n".join(mentions),
+                inline=False
+            )
+
+        await ctx.send(embed=embed)
+
+
+# ============================================================
+# !sqclose = fermer la SQ
+# ============================================================
+
+@bot.command()
+@commands.guild_only()
+async def sqclose(ctx, name: str = None):
+    if not is_sq_admin(ctx.author):
+        await ctx.send("❌ You must be an administrator to close a SQ.")
+        return
+
+    guild_id = ctx.guild.id
+    server_queues = get_server_queues(guild_id)
+
+    if not server_queues:
+        await ctx.send("❌ No SQs are open.")
+        return
+
+    if name:
+        sq_key = name.lower()
+        if sq_key not in server_queues:
+            await ctx.send(f"❌ No SQ named `{name}` found.")
+            return
+        queue = server_queues.pop(sq_key)
+        if not server_queues:
+            del queues[guild_id]
+        await ctx.send(f"🛑 SQ **{queue['name']}** ({format_name(queue['size'])}) has been closed.")
+    else:
+        if len(server_queues) == 1:
+            sq_key = list(server_queues.keys())[0]
+            queue = server_queues.pop(sq_key)
+            del queues[guild_id]
+            await ctx.send(f"🛑 SQ **{queue['name']}** ({format_name(queue['size'])}) has been closed.")
+        else:
+            names = ", ".join([q["name"] for q in server_queues.values()])
+            await ctx.send(f"❌ Multiple SQs are open ({names}). Please specify the name: `!sqclose <name>`.")
+
+
+# ============================================================
+# !sqhelp
+# ============================================================
+
+@bot.command()
+@commands.guild_only()
+async def sqhelp(ctx):
+    embed = discord.Embed(
+        title="📖 Commandes SQ",
+        description=(
+            "`!sq <format> <name>` — opens a named SQ (admin, e.g. `!sq 3v3 RR`)\n\n"
+            "`!c @p1 @p2` — invites players\n"
+            "`!c <name> @p1 @p2` — invites players to a specific SQ\n"
+            "`!c` — accept a pending invite\n"
+            "`!d` — leave your team\n"
+            "`!sqlist [name]` — see teams (all or specific SQ)\n"
+            "`!sqclose <name>` — close a specific SQ (admin)"
+        )
+    )
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# ERREURS
+# ============================================================
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.MemberNotFound):
+        await ctx.send("❌ Player not found. Use member mentions/pings.")
+        return
+
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❌ Missing arguments. Use `!sqhelp` to see all commands.")
+        return
+
+    if isinstance(error, commands.CommandNotFound):
+        return
+
+    print(f"Error: {error}")
+
+
+# ============================================================
+# LANCEMENT
+# ============================================================
+
+if TOKEN == "MET_TON_TOKEN_ICI":
+    print("⚠️ Do not forget to input your token.")
+
+bot.run(TOKEN)

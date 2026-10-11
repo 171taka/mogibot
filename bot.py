@@ -480,7 +480,7 @@ async def sqclose(ctx, name: str = None):
         return
 
     if name:
-        sq_key = name.lower()
+        sq_key = name.strip().lower()
         if sq_key not in server_queues:
             await ctx.send(f"❌ No SQ named `{name}` found.")
             return

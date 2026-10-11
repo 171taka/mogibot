@@ -102,7 +102,7 @@ async def on_ready():
 
 @bot.command()
 @commands.guild_only()
-async def sq(ctx, format_: str = None, *, name: str = None):
+async def sq(ctx, format_: str = None, name: str = None):
     """Ouvre une SQ nommée."""
     if not is_sq_admin(ctx.author):
         await ctx.send("❌ You need to be an administrator to open SQ.")
